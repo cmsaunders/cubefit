@@ -17,7 +17,7 @@ import numpy as np
 from .version import __version__
 from .psffuncs import gaussian_moffat_psf
 from .psf import TabularPSF, GaussianMoffatPSF
-from .io import read_datacube, write_results, read_results
+from .io import read_datacube, write_results, read_results, read_psfcube
 from .fitting import (guess_sky, fit_galaxy_single, fit_galaxy_sky_multi,
                       fit_position_sky, fit_position_sky_sn_multi,
                       RegularizationPenalty)
@@ -78,7 +78,7 @@ def snfpsf(wave, psfparams, header, psftype):
 
     adr = ADR(pressure, temp, lref=REFWAVE, delta=delta, theta=theta)
     adr_refract = adr.refract(0, 0, wave, unit=SPAXEL_SIZE)
-        
+
     # adr_refract[0, :] corresponds to x, adr_refract[1, :] => y
     xctr, yctr = adr_refract
 
@@ -140,9 +140,12 @@ def cubefit(argv=None):
                         help="Spatial regularization parameter. "
                         "Default is 0.001.")
     parser.add_argument("--psftype", default="gaussian-moffat",
-                        help="Type of PSF: 'gaussian-moffat' or 'tabular'. "
-                        "Currently, tabular means generate a tabular PSF from "
-                        "gaussian-moffat parameters.")
+                        help="Type of PSF: 'gaussian-moffat', 'tabular',"
+                        "or tabfile. Currently, tabular means generate a "
+                        "tabular PSF from gaussian-moffat parameters, while"
+                        "tabfile reads an array from a file.")
+    parser.add_argument("--rescale", default=False, action="store_true",
+                        help="Rescale data so that it is on the order of 1")
     args = parser.parse_args(argv)
 
     setup_logging(args.loglevel, logfname=args.logfile)
@@ -174,7 +177,8 @@ def cubefit(argv=None):
     cubes = []
     for fname in cfg["filenames"]:
         logging.debug("  reading %s", fname)
-        cubes.append(read_datacube(os.path.join(args.dataprefix, fname)))
+        cubes.append(read_datacube(os.path.join(args.dataprefix, fname), 
+                                   scale=args.rescale))
     wave = cubes[0].wave
     nw = len(wave)
 
@@ -195,8 +199,12 @@ def cubefit(argv=None):
     # PSF for each observation
 
     logging.info("setting up PSF for all %d epochs", nt)
-    psfs = [snfpsf(wave, cfg["psf_params"][i], cubes[i].header, args.psftype)
-            for i in range(nt)]
+    if args.psftype == 'tabfile':
+        psfs = [read_psfcube(cfg["psf_filenames"][i], wave=wave) for i in
+                range(nt)]
+    else:
+        psfs = [snfpsf(wave, cfg["psf_params"][i], cubes[i].header,
+                       args.psftype) for i in range(nt)]
 
     # -------------------------------------------------------------------------
     # Initialize all model parameters to be fit
@@ -279,7 +287,8 @@ def cubefit(argv=None):
     if args.diagdir:
         fname = os.path.join(args.diagdir, 'step1.fits')
         write_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
-                      yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname)
+                      yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname, 
+                      descale=(not args.rescale))
 
     tsteps["fit galaxy to master ref"] = datetime.now()
 
@@ -338,7 +347,8 @@ def cubefit(argv=None):
     if args.diagdir:
         fname = os.path.join(args.diagdir, 'step2.fits')
         write_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
-                      yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname)
+                      yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname,
+                      descale=(not args.rescale))
 
     tsteps["fit galaxy to all refs"] = datetime.now()
 
@@ -378,7 +388,8 @@ def cubefit(argv=None):
         if args.diagdir:
             fname = os.path.join(args.diagdir, 'step3.fits')
             write_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
-                          yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname)
+                          yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname,
+                          descale=(not args.rescale))
 
         # ---------------------------------------------------------------------
         # Redo fit of galaxy, using ALL epochs, including ones with SN
@@ -413,7 +424,8 @@ def cubefit(argv=None):
         if args.diagdir:
             fname = os.path.join(args.diagdir, 'step4.fits')
             write_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
-                          yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname)
+                          yctrbounds, xctrbounds, cubes, psfs, modelwcs, fname,
+                          descale=(not args.rescale))
 
         # ---------------------------------------------------------------------
         # Repeat step before last: fit position of data and SN in
@@ -442,7 +454,8 @@ def cubefit(argv=None):
 
     logging.info("writing results to %s", args.outfile)
     write_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
-                  yctrbounds, xctrbounds, cubes, psfs, modelwcs, args.outfile)
+                  yctrbounds, xctrbounds, cubes, psfs, modelwcs, args.outfile,
+                  descale=(not args.rescale))
 
     # time info
     logging.info("step times:")

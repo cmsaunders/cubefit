@@ -5,8 +5,10 @@ import numpy as np
 import fitsio
 
 from .version import __version__
+from .psf import TabularPSF
 
-__all__ = ["DataCube", "read_datacube", "write_results", "read_results"]
+__all__ = ["DataCube", "read_datacube", "write_results", "read_results",
+           "read_psfcube"]
 
 SCALE_FACTOR = 1.e17
 
@@ -90,6 +92,37 @@ def read_datacube(filename, scale=True):
 
     return DataCube(data, weight, wave, header=header)
 
+def read_psfcube(filename, wave=None):
+    """Read a one-HDU fits file into memory
+
+    Parameters
+    ----------
+    filname : str
+    wave : array, optional
+        If set, match psf wavelength to wave values
+    Returns
+    -------
+    TabularPSF object
+    """
+    with fitsio.FITS(filename, "r") as f:
+        header = f[0].read_header()
+        psf_array = np.asarray(f[0].read(), dtype=np.float64)
+
+    if wave is not None:
+        psf_wave = wcs_to_wave(header)
+        # wave must be a subset of psf_wave:
+        if ((not np.isclose(np.diff(wave)[0], np.diff(psf_wave)[0])) or 
+            (not np.isclose(wave[0], psf_wave).any())
+            or (not np.isclose(wave[-1], psf_wave).any())):
+            raise ValueError('Data wavelengths must be a subset of psf '
+                             'wavelengths')
+        w_start = np.flatnonzero(np.isclose(psf_wave, wave[0]))[0]
+        psf_array = psf_array[w_start:w_start + len(wave)]
+    # Code assumes a normalized PSF: do a little empirical normalization here,
+    # accounting for finite thumbnail size
+    psf_sum = psf_array.sum(axis=(1,2))
+    psf_array *= (0.9987/psf_sum)[:, None, None]
+    return TabularPSF(psf_array)
 
 def epoch_results(galaxy, skys, sn, snctr, yctr, xctr, yctr0, xctr0,
                   yctrbounds, xctrbounds, cubes, psfs):
