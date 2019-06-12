@@ -201,8 +201,9 @@ def cubefit(argv=None):
 
     logging.info("setting up PSF for all %d epochs", nt)
     if args.psftype == 'tabfile':
-        psfs = [read_psfcube(cfg["psf_filenames"][i], wave=wave) for i in
-                range(nt)]
+        psfs = [read_psfcube(os.path.join(args.dataprefix, 
+                                          cfg["psf_filenames"][i]), wave=wave)
+                             for i in range(nt)]
     else:
         psfs = [snfpsf(wave, cfg["psf_params"][i], cubes[i].header,
                        args.psftype) for i in range(nt)]
